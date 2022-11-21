@@ -1,16 +1,62 @@
 const router = require('express').Router()
+const jwt = require('jsonwebtoken')
+const { Op } = require('sequelize')
 
-const { Blog } = require('../models')
+const { Blog, User } = require('../models')
+const { SECRET } = require('../util/config')
 
 router.get('/', async (req, res) => {
-  const blogs = await Blog.findAll()
+  let where = {}
+
+  if (req.query.search) {
+    where = {
+      [Op.or]: [
+        {
+          title: {
+            [Op.iLike]: '%'+req.query.search+'%'
+          }
+        },
+        {
+          author: {
+            [Op.iLike]: '%'+req.query.search+'%'
+          }
+        }
+      ]
+    }
+  }
+
+  const blogs = await Blog.findAll({
+    include: {
+      model: User,
+      attributes: ['name']
+    },
+    where,
+    order: [
+      ['likes', 'DESC']
+    ]
+  })
   console.log(JSON.stringify(blogs))
   res.json(blogs)
 })
 
-router.post('/', async (req, res, next) => {
+const tokenExtractor = (req, res, next) => {
+  const authorization = req.get('authorization')
+  if (authorization && authorization.toLowerCase().startsWith('bearer ')) {
+    try {
+      req.decodedToken = jwt.verify(authorization.substring(7), SECRET)
+    } catch{
+      return res.status(401).json({ error: 'token invalid' })
+    }
+  }  else {
+    return res.status(401).json({ error: 'token missing' })
+  }
+  next()
+}
+
+router.post('/', tokenExtractor, async (req, res, next) => {
   try {
-    const blog = await Blog.create(req.body)
+    const user = await User.findByPk(req.decodedToken.id)
+    const blog = await Blog.create({...req.body, userId: user.id})
     return res.json(blog)
   } catch(error) {
     next(error)
@@ -22,11 +68,19 @@ const blogFinder = async (req, res, next) => {
   next()
 }
 
-router.delete('/:id', blogFinder, async (req, res) => {
-  if (req.blog) {
-    await req.blog.destroy()
+router.delete('/:id', blogFinder, tokenExtractor, async (req, res, next) => {
+  try {
+    const user = await User.findByPk(req.decodedToken.id)
+    if (req.blog.userId === user.id) {
+      await req.blog.destroy()
+      res.status(204).end()
+    } else {
+      return res.status(400).json({ error })
+    }
+  } catch(error) {
+    next(error)
   }
-  res.status(204).end()
+  
 })
 
 router.put('/:id', blogFinder, async (req, res, next) => {
@@ -44,18 +98,6 @@ router.put('/:id', blogFinder, async (req, res, next) => {
   
 })
 
-const errorHandler = (error, request, response, next) => {
-  if (error.name === 'SequelizeDatabaseError') {
-    return response.status(400).send({ error: 'malformatted format' })
-  } 
 
-  if (error.name === 'SequelizeValidationError') {
-    return response.status(400).send({ error: error.message })
-  } 
-
-  next(error)
-}
-
-router.use(errorHandler)
 
 module.exports = router
