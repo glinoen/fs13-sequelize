@@ -14,7 +14,7 @@ router.get('/', async (req, res) => {
       ],
       order: [[sequelize.fn("max", sequelize.col("likes")), "DESC"]], 
     });
-    res.json(authors);
+    res.json(authors)
   } catch(error) {
     console.log(error)
   }
